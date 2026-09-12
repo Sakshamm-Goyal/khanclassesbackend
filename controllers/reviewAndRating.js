@@ -1,28 +1,51 @@
 const Review = require('../models/review');
 
-exports.reviewAndRating = async (req, res) => {
-    try {
-        const { name, email, testimonial, rating } = req.body;
+const normalizeText = (value) => value.trim().replace(/\s+/g, ' ');
 
-        if (!name  || !testimonial || rating === undefined) {
+exports.reviewAndRating = async (req, res) => {
+    const submissionKey = req.get('Idempotency-Key');
+
+    try {
+        const name = normalizeText(req.body.name || '');
+        const email = (req.body.email || '').trim().toLowerCase();
+        const testimonial = normalizeText(req.body.testimonial || '');
+        const rating = Number(req.body.rating);
+
+        if (!name || !testimonial || !Number.isInteger(rating) || rating < 1 || rating > 5) {
             return res.status(400).json({
                 success: false,
-                message: "Fill all fields carefully"
+                message: 'Please provide a name, review, and a rating from 1 to 5.'
             });
         }
 
-        const response = await Review.create({ name, email, testimonial, rating });
+        const review = await Review.create({
+            name,
+            email,
+            testimonial,
+            rating,
+            ...(submissionKey && { submissionKey })
+        });
 
-        res.status(200).json({
+        return res.status(201).json({
             success: true,
-            message: "Review created successfully",
-            data: response
+            message: 'Review created successfully',
+            data: review
         });
     } catch (err) {
+        if (err.code === 11000 && submissionKey) {
+            const review = await Review.findOne({ submissionKey });
+            return res.status(200).json({
+                success: true,
+                duplicate: true,
+                message: 'This review was already submitted.',
+                data: review
+            });
+        }
+
         console.error(err);
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
-            message: "Internal server error",
+            message: 'Internal server error',
             error: err.message
         });
     }
@@ -30,17 +53,17 @@ exports.reviewAndRating = async (req, res) => {
 
 exports.getAllReviews = async (req, res) => {
     try {
-        const reviews = await Review.find();
-        res.status(200).json({
+        const reviews = await Review.find().sort({ createdAt: -1, _id: -1 });
+        return res.status(200).json({
             success: true,
-            message: "Reviews retrieved successfully",
+            message: 'Reviews retrieved successfully',
             data: reviews
         });
     } catch (err) {
         console.error(err);
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
-            message: "Internal server error",
+            message: 'Internal server error',
             error: err.message
         });
     }
